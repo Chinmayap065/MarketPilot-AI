@@ -1,0 +1,27 @@
+{
+  "name": "marketpilot-ai",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Explainable multi-asset market intelligence and paper-trading platform",
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev": "concurrently -n web,api,ml -c cyan,green,yellow \"npm run dev --workspace=@marketpilot/web\" \"npm run dev --workspace=@marketpilot/api\" \"python -m uvicorn app.main:app --reload --app-dir apps/ml-service --port 8000\"",
+    "build": "npm run build --workspace=@marketpilot/types && npm run build --workspace=@marketpilot/web && npm run build --workspace=@marketpilot/api",
+    "start": "npm run start --workspace=@marketpilot/web",
+    "typecheck": "npm run build --workspace=@marketpilot/types && npm run typecheck --workspace=@marketpilot/web && npm run typecheck --workspace=@marketpilot/api",
+    "lint": "eslint .",
+    "install:all": "npm install",
+    "infra:up": "docker compose up -d postgres redis",
+    "infra:down": "docker compose down"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@next/eslint-plugin-next": "^15.5.25",
+    "concurrently": "^9.1.2",
+    "eslint": "^9.17.0",
+    "typescript-eslint": "^8.18.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
