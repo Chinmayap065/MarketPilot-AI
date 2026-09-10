@@ -52,6 +52,8 @@ function createQuote(source: string): MarketQuote {
 function createProvider(
   source: string,
   getQuote: MarketDataProvider['getQuote'],
+  getHistoricalData: MarketDataProvider['getHistoricalData'] =
+    async () => [],
 ): MarketDataProvider {
   return {
     capabilities: {
@@ -65,9 +67,7 @@ function createProvider(
 
     getQuote,
 
-    async getHistoricalData() {
-      return [];
-    },
+    getHistoricalData,
 
     async searchAssets() {
       return [];
@@ -427,5 +427,86 @@ describe('market data foundation', () => {
     expect(result.candles).toHaveLength(2);
     expect(result.rejected).toBe(0);
     expect(result.duplicates).toBe(0);
+  });
+
+  it('normalizes historical data through the service boundary', async () => {
+    const newer: MarketCandle = {
+      assetId: 'test',
+      timestamp: '2026-09-09T00:00:00.000Z',
+      timeframe: '1d',
+      open: 110,
+      high: 120,
+      low: 105,
+      close: 115,
+      source: 'twelve-data',
+    };
+
+    const older: MarketCandle = {
+      assetId: 'test',
+      timestamp: '2026-09-08T00:00:00.000Z',
+      timeframe: '1d',
+      open: 100,
+      high: 110,
+      low: 95,
+      close: 105,
+      source: 'twelve-data',
+    };
+
+    const duplicate: MarketCandle = {
+      ...older,
+    };
+
+    const invalid: MarketCandle = {
+      assetId: 'test',
+      timestamp: '2026-09-10T00:00:00.000Z',
+      timeframe: '1d',
+      open: 100,
+      high: 90,
+      low: 95,
+      close: 105,
+      source: 'twelve-data',
+    };
+
+    const provider = createProvider(
+      'twelve-data',
+      async () => createQuote('twelve-data'),
+      async () => [
+        newer,
+        duplicate,
+        invalid,
+        older,
+      ],
+    );
+
+    const service = new MarketDataService({
+      providers: new Map([
+        ['twelve-data', provider],
+      ]),
+      cache: noCache,
+    });
+
+    const result = await service.getHistory(
+      'AAPL',
+      '1d',
+      new Date('2026-09-08T00:00:00.000Z'),
+      new Date('2026-09-10T00:00:00.000Z'),
+    );
+
+    expect(result.data).toHaveLength(2);
+
+    expect(
+      result.data.map(
+        (candle) => candle.timestamp,
+      ),
+    ).toEqual([
+      '2026-09-08T00:00:00.000Z',
+      '2026-09-09T00:00:00.000Z',
+    ]);
+
+    expect(result.meta.source).toBe(
+      'twelve-data',
+    );
+
+    expect(result.meta.rejected).toBe(2);
   });
 });

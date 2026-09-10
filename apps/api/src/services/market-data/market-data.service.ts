@@ -18,7 +18,11 @@ import { AssetRegistry } from './registry.js';
 import { UnavailableMarketDataProvider } from './unavailable.provider.js';
 import { TwelveDataProvider } from './twelve-data.provider.js';
 import { AlphaVantageProvider } from './alpha-vantage.provider.js';
-import { validateCandle } from './validation.js';
+
+import {
+  normalizeCandles,
+} from './validation.js';
+
 import { MarketDataCache } from './cache.service.js';
 
 type MarketDataCachePort = Pick<
@@ -34,18 +38,28 @@ interface MarketDataServiceDependencies {
 export class MarketDataService {
   private readonly registry = new AssetRegistry();
   private readonly cache: MarketDataCachePort;
-  private readonly providers: Map<string, MarketDataProvider>;
+  private readonly providers: Map<
+    string,
+    MarketDataProvider
+  >;
 
   constructor(
     dependencies: MarketDataServiceDependencies = {},
   ) {
-    this.cache = dependencies.cache ?? new MarketDataCache();
+    this.cache =
+      dependencies.cache ?? new MarketDataCache();
 
     this.providers =
       dependencies.providers ??
       new Map<string, MarketDataProvider>([
-        ['twelve-data', new TwelveDataProvider()],
-        ['alpha-vantage', new AlphaVantageProvider()],
+        [
+          'twelve-data',
+          new TwelveDataProvider(),
+        ],
+        [
+          'alpha-vantage',
+          new AlphaVantageProvider(),
+        ],
       ]);
   }
 
@@ -65,7 +79,9 @@ export class MarketDataService {
     return uniqueNames
       .map((name) => this.providers.get(name))
       .filter(
-        (provider): provider is MarketDataProvider =>
+        (
+          provider,
+        ): provider is MarketDataProvider =>
           provider !== undefined,
       );
   }
@@ -79,11 +95,15 @@ export class MarketDataService {
     );
   }
 
-  findAsset(symbol: string): Asset | undefined {
+  findAsset(
+    symbol: string,
+  ): Asset | undefined {
     return this.registry.find(symbol);
   }
 
-  searchAssets(query: string): Asset[] {
+  searchAssets(
+    query: string,
+  ): Asset[] {
     return this.registry.search(query);
   }
 
@@ -110,7 +130,10 @@ export class MarketDataService {
       };
     }
 
-    const cached = await this.cache.getQuote(asset.symbol);
+    const cached =
+      await this.cache.getQuote(
+        asset.symbol,
+      );
 
     if (cached) {
       return {
@@ -132,15 +155,24 @@ export class MarketDataService {
       };
     }
 
-    const providers = this.providerCandidates(asset);
+    const providers =
+      this.providerCandidates(asset);
 
     for (const provider of providers) {
-      if (!this.supportsAsset(provider, asset)) {
+      if (
+        !this.supportsAsset(
+          provider,
+          asset,
+        )
+      ) {
         continue;
       }
 
       try {
-        const quote = await provider.getQuote(asset);
+        const quote =
+          await provider.getQuote(
+            asset,
+          );
 
         await this.cache.setQuote(
           asset.symbol,
@@ -152,11 +184,15 @@ export class MarketDataService {
           meta: {
             source: quote.source,
             cached: false,
-            dataStatus: quote.dataStatus,
+            dataStatus:
+              quote.dataStatus,
           },
         };
       } catch (error) {
-        if (error instanceof ProviderUnavailableError) {
+        if (
+          error instanceof
+          ProviderUnavailableError
+        ) {
           continue;
         }
 
@@ -187,7 +223,8 @@ export class MarketDataService {
       rejected: number;
     };
   }> {
-    const asset = this.registry.find(symbol);
+    const asset =
+      this.registry.find(symbol);
 
     if (!asset) {
       return {
@@ -200,10 +237,16 @@ export class MarketDataService {
       };
     }
 
-    const providers = this.providerCandidates(asset);
+    const providers =
+      this.providerCandidates(asset);
 
     for (const provider of providers) {
-      if (!this.supportsAsset(provider, asset)) {
+      if (
+        !this.supportsAsset(
+          provider,
+          asset,
+        )
+      ) {
         continue;
       }
 
@@ -216,22 +259,25 @@ export class MarketDataService {
             end,
           });
 
-        const accepted = candles.filter(
-          (candle) =>
-            validateCandle(candle).length === 0,
-        );
+        const normalized =
+          normalizeCandles(candles);
 
         return {
-          data: accepted,
+          data: normalized.candles,
           meta: {
-            source: provider.capabilities.provider,
+            source:
+              provider.capabilities.provider,
             dataStatus: 'LIVE',
             rejected:
-              candles.length - accepted.length,
+              normalized.rejected +
+              normalized.duplicates,
           },
         };
       } catch (error) {
-        if (error instanceof ProviderUnavailableError) {
+        if (
+          error instanceof
+          ProviderUnavailableError
+        ) {
           continue;
         }
 
@@ -252,7 +298,8 @@ export class MarketDataService {
   async getMarketStatus(
     symbol: string,
   ): Promise<MarketStatus> {
-    const asset = this.registry.find(symbol);
+    const asset =
+      this.registry.find(symbol);
 
     if (!asset) {
       return {
@@ -263,17 +310,28 @@ export class MarketDataService {
       };
     }
 
-    const providers = this.providerCandidates(asset);
+    const providers =
+      this.providerCandidates(asset);
 
     for (const provider of providers) {
-      if (!this.supportsAsset(provider, asset)) {
+      if (
+        !this.supportsAsset(
+          provider,
+          asset,
+        )
+      ) {
         continue;
       }
 
       try {
-        return await provider.getMarketStatus(asset);
+        return await provider.getMarketStatus(
+          asset,
+        );
       } catch (error) {
-        if (error instanceof ProviderUnavailableError) {
+        if (
+          error instanceof
+          ProviderUnavailableError
+        ) {
           continue;
         }
 
