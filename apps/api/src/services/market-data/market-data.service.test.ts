@@ -12,7 +12,12 @@ import {
 } from './provider.js';
 
 import { MarketDataService } from './market-data.service.js';
-import { validateCandle, validateDateRange } from './validation.js';
+
+import {
+  normalizeCandles,
+  validateCandle,
+  validateDateRange,
+} from './validation.js';
 
 const asset: Asset = {
   id: 'test',
@@ -83,7 +88,9 @@ describe('market data foundation', () => {
   it('returns canonical assets without fabricating quotes', () => {
     const service = new MarketDataService();
 
-    expect(service.searchAssets('BTC/USD')[0]?.assetClass).toBe('CRYPTO');
+    expect(service.searchAssets('BTC/USD')[0]?.assetClass).toBe(
+      'CRYPTO',
+    );
   });
 
   it('reports provider absence explicitly', async () => {
@@ -105,12 +112,17 @@ describe('market data foundation', () => {
       source: 'test',
     };
 
-    expect(validateCandle(candle)).toContain('invalid_high');
+    expect(validateCandle(candle)).toContain(
+      'invalid_high',
+    );
   });
 
   it('bounds historical date ranges', () => {
     expect(() =>
-      validateDateRange('2020-01-01', '2022-01-01'),
+      validateDateRange(
+        '2020-01-01',
+        '2022-01-01',
+      ),
     ).toThrow('date_range_too_large');
   });
 
@@ -118,15 +130,21 @@ describe('market data foundation', () => {
     let primaryCalls = 0;
     let secondaryCalls = 0;
 
-    const primary = createProvider('twelve-data', async () => {
-      primaryCalls += 1;
-      return createQuote('twelve-data');
-    });
+    const primary = createProvider(
+      'twelve-data',
+      async () => {
+        primaryCalls += 1;
+        return createQuote('twelve-data');
+      },
+    );
 
-    const secondary = createProvider('alpha-vantage', async () => {
-      secondaryCalls += 1;
-      return createQuote('alpha-vantage');
-    });
+    const secondary = createProvider(
+      'alpha-vantage',
+      async () => {
+        secondaryCalls += 1;
+        return createQuote('alpha-vantage');
+      },
+    );
 
     const service = new MarketDataService({
       providers: new Map([
@@ -147,19 +165,25 @@ describe('market data foundation', () => {
     let primaryCalls = 0;
     let secondaryCalls = 0;
 
-    const primary = createProvider('twelve-data', async () => {
-      primaryCalls += 1;
+    const primary = createProvider(
+      'twelve-data',
+      async () => {
+        primaryCalls += 1;
 
-      throw new ProviderUnavailableError(
-        'twelve-data',
-        'UNAVAILABLE',
-      );
-    });
+        throw new ProviderUnavailableError(
+          'twelve-data',
+          'UNAVAILABLE',
+        );
+      },
+    );
 
-    const secondary = createProvider('alpha-vantage', async () => {
-      secondaryCalls += 1;
-      return createQuote('alpha-vantage');
-    });
+    const secondary = createProvider(
+      'alpha-vantage',
+      async () => {
+        secondaryCalls += 1;
+        return createQuote('alpha-vantage');
+      },
+    );
 
     const service = new MarketDataService({
       providers: new Map([
@@ -178,19 +202,25 @@ describe('market data foundation', () => {
   });
 
   it('returns unavailable when both providers fail', async () => {
-    const primary = createProvider('twelve-data', async () => {
-      throw new ProviderUnavailableError(
-        'twelve-data',
-        'UNAVAILABLE',
-      );
-    });
+    const primary = createProvider(
+      'twelve-data',
+      async () => {
+        throw new ProviderUnavailableError(
+          'twelve-data',
+          'UNAVAILABLE',
+        );
+      },
+    );
 
-    const secondary = createProvider('alpha-vantage', async () => {
-      throw new ProviderUnavailableError(
-        'alpha-vantage',
-        'UNAVAILABLE',
-      );
-    });
+    const secondary = createProvider(
+      'alpha-vantage',
+      async () => {
+        throw new ProviderUnavailableError(
+          'alpha-vantage',
+          'UNAVAILABLE',
+        );
+      },
+    );
 
     const service = new MarketDataService({
       providers: new Map([
@@ -203,19 +233,29 @@ describe('market data foundation', () => {
     const result = await service.getQuote('AAPL');
 
     expect(result.data).toBeNull();
-    expect(result.meta.dataStatus).toBe('UNAVAILABLE');
+    expect(result.meta.dataStatus).toBe(
+      'UNAVAILABLE',
+    );
   });
 
   it('propagates unexpected provider errors', async () => {
-    const unexpectedError = new Error('unexpected provider failure');
+    const unexpectedError = new Error(
+      'unexpected provider failure',
+    );
 
-    const primary = createProvider('twelve-data', async () => {
-      throw unexpectedError;
-    });
+    const primary = createProvider(
+      'twelve-data',
+      async () => {
+        throw unexpectedError;
+      },
+    );
 
-    const secondary = createProvider('alpha-vantage', async () => {
-      return createQuote('alpha-vantage');
-    });
+    const secondary = createProvider(
+      'alpha-vantage',
+      async () => {
+        return createQuote('alpha-vantage');
+      },
+    );
 
     const service = new MarketDataService({
       providers: new Map([
@@ -225,8 +265,167 @@ describe('market data foundation', () => {
       cache: noCache,
     });
 
-    await expect(service.getQuote('AAPL')).rejects.toThrow(
+    await expect(
+      service.getQuote('AAPL'),
+    ).rejects.toThrow(
       'unexpected provider failure',
     );
+  });
+
+  it('removes invalid candles and reports the rejection count', () => {
+    const validCandle: MarketCandle = {
+      assetId: 'a',
+      timestamp: '2026-09-08T00:00:00.000Z',
+      timeframe: '1d',
+      open: 100,
+      high: 110,
+      low: 95,
+      close: 105,
+      source: 'test',
+    };
+
+    const invalidCandle: MarketCandle = {
+      assetId: 'a',
+      timestamp: '2026-09-09T00:00:00.000Z',
+      timeframe: '1d',
+      open: 100,
+      high: 90,
+      low: 95,
+      close: 105,
+      source: 'test',
+    };
+
+    const result = normalizeCandles(
+      [validCandle, invalidCandle],
+      new Date('2026-09-10T00:00:00.000Z'),
+    );
+
+    expect(result.candles).toHaveLength(1);
+    expect(result.rejected).toBe(1);
+    expect(result.duplicates).toBe(0);
+  });
+
+  it('normalizes timestamps to ISO UTC format', () => {
+    const candle: MarketCandle = {
+      assetId: 'a',
+      timestamp: '2026-09-08T05:30:00+05:30',
+      timeframe: '1d',
+      open: 100,
+      high: 110,
+      low: 95,
+      close: 105,
+      source: 'test',
+    };
+
+    const result = normalizeCandles(
+      [candle],
+      new Date('2026-09-10T00:00:00.000Z'),
+    );
+
+    expect(result.candles[0]?.timestamp).toBe(
+      '2026-09-08T00:00:00.000Z',
+    );
+  });
+
+  it('sorts valid candles chronologically', () => {
+    const newer: MarketCandle = {
+      assetId: 'a',
+      timestamp: '2026-09-10T00:00:00.000Z',
+      timeframe: '1d',
+      open: 110,
+      high: 120,
+      low: 105,
+      close: 115,
+      source: 'test',
+    };
+
+    const older: MarketCandle = {
+      assetId: 'a',
+      timestamp: '2026-09-08T00:00:00.000Z',
+      timeframe: '1d',
+      open: 100,
+      high: 110,
+      low: 95,
+      close: 105,
+      source: 'test',
+    };
+
+    const middle: MarketCandle = {
+      assetId: 'a',
+      timestamp: '2026-09-09T00:00:00.000Z',
+      timeframe: '1d',
+      open: 105,
+      high: 115,
+      low: 100,
+      close: 110,
+      source: 'test',
+    };
+
+    const result = normalizeCandles(
+      [newer, older, middle],
+      new Date('2026-09-11T00:00:00.000Z'),
+    );
+
+    expect(
+      result.candles.map(
+        (candle) => candle.timestamp,
+      ),
+    ).toEqual([
+      '2026-09-08T00:00:00.000Z',
+      '2026-09-09T00:00:00.000Z',
+      '2026-09-10T00:00:00.000Z',
+    ]);
+  });
+
+  it('removes duplicate candles', () => {
+    const candle: MarketCandle = {
+      assetId: 'a',
+      timestamp: '2026-09-08T00:00:00.000Z',
+      timeframe: '1d',
+      open: 100,
+      high: 110,
+      low: 95,
+      close: 105,
+      source: 'test',
+    };
+
+    const duplicate = { ...candle };
+
+    const result = normalizeCandles(
+      [candle, duplicate],
+      new Date('2026-09-10T00:00:00.000Z'),
+    );
+
+    expect(result.candles).toHaveLength(1);
+    expect(result.rejected).toBe(0);
+    expect(result.duplicates).toBe(1);
+  });
+
+  it('preserves distinct candles with the same timestamp from different sources', () => {
+    const first: MarketCandle = {
+      assetId: 'a',
+      timestamp: '2026-09-08T00:00:00.000Z',
+      timeframe: '1d',
+      open: 100,
+      high: 110,
+      low: 95,
+      close: 105,
+      source: 'twelve-data',
+    };
+
+    const second: MarketCandle = {
+      ...first,
+      close: 106,
+      source: 'alpha-vantage',
+    };
+
+    const result = normalizeCandles(
+      [first, second],
+      new Date('2026-09-10T00:00:00.000Z'),
+    );
+
+    expect(result.candles).toHaveLength(2);
+    expect(result.rejected).toBe(0);
+    expect(result.duplicates).toBe(0);
   });
 });
