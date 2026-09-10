@@ -1,9 +1,14 @@
 from dataclasses import dataclass
 
 from app.benchmark import BaselineBenchmark, benchmark_majority_baseline
+from app.dataset import ModelDataset
+from app.dataset_validation import validate_model_dataset
 from app.evaluation import ClassificationMetrics, classification_metrics
 from app.logistic_model import LogisticRegressionModel
-from app.purged_split import PurgedChronologicalSplit, purged_chronological_split
+from app.purged_split import (
+    PurgedChronologicalSplit,
+    purged_chronological_split,
+)
 
 
 @dataclass(frozen=True)
@@ -36,28 +41,15 @@ def _to_model_benchmark(metrics: ClassificationMetrics) -> ModelBenchmark:
 
 
 def train_and_evaluate(
-    x: list[list[float]],
-    y: list[int],
+    dataset: ModelDataset,
     horizon: int = 1,
     train_ratio: float = 0.70,
     validation_ratio: float = 0.15,
 ) -> TrainingResult:
-    """
-    Train Logistic Regression using a purged chronological split.
-
-    Scaling is fitted only on the training partition.
-
-    Validation and test data remain completely unseen during model fitting.
-    A majority-class baseline is evaluated on the same partitions.
-    """
-    if len(x) != len(y):
-        raise ValueError("features and labels must have the same length")
-
-    if not x:
-        raise ValueError("training dataset cannot be empty")
+    validate_model_dataset(dataset)
 
     split = purged_chronological_split(
-        list(range(len(x))),
+        list(range(len(dataset.x))),
         horizon=horizon,
         train_ratio=train_ratio,
         validation_ratio=validation_ratio,
@@ -67,14 +59,14 @@ def train_and_evaluate(
     validation_indices = split.validation
     test_indices = split.test
 
-    x_train = [x[index] for index in train_indices]
-    y_train = [y[index] for index in train_indices]
+    x_train = [dataset.x[index] for index in train_indices]
+    y_train = [dataset.y[index] for index in train_indices]
 
-    x_validation = [x[index] for index in validation_indices]
-    y_validation = [y[index] for index in validation_indices]
+    x_validation = [dataset.x[index] for index in validation_indices]
+    y_validation = [dataset.y[index] for index in validation_indices]
 
-    x_test = [x[index] for index in test_indices]
-    y_test = [y[index] for index in test_indices]
+    x_test = [dataset.x[index] for index in test_indices]
+    y_test = [dataset.y[index] for index in test_indices]
 
     model = LogisticRegressionModel()
     model.fit(x_train, y_train)
