@@ -507,6 +507,7 @@ describe('market data foundation', () => {
       'twelve-data',
     );
 
-    expect(result.meta.rejected).toBe(2);
+    expect(result.meta.rejected).toBe(1);
+    expect(result.meta.duplicates).toBe(1);
   });
 });
