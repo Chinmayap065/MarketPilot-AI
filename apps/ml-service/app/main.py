@@ -6,12 +6,38 @@ from pydantic import BaseModel
 
 from app.dataset import training_rows_to_model_dataset
 from app.dataset_validation import validate_model_dataset
+from app.training_pipeline import train_and_evaluate
 
 app = FastAPI(title="MarketPilot ML Service", version="0.1.0")
 
 
 class DatasetValidationRequest(BaseModel):
     rows: list[dict[str, Any]]
+
+
+class ModelTrainingRequest(BaseModel):
+    rows: list[dict[str, Any]]
+    horizon: int = 1
+    trainRatio: float = 0.70
+    validationRatio: float = 0.15
+
+
+def _metrics_to_dict(metrics: object) -> dict[str, float]:
+    return {
+        "accuracy": metrics.accuracy,
+        "precision": metrics.precision,
+        "recall": metrics.recall,
+        "f1": metrics.f1,
+        "logLoss": metrics.log_loss,
+    }
+
+
+def _baseline_to_dict(baseline: object) -> dict[str, object]:
+    return {
+        "metrics": _metrics_to_dict(baseline.metrics),
+        "predictedClass": baseline.predicted_class,
+        "predictedClassProbability": baseline.predicted_class_probability,
+    }
 
 
 @app.get("/health")
@@ -52,6 +78,43 @@ def validate_dataset(request: DatasetValidationRequest) -> dict[str, object]:
             "volume_change_1",
             "rsi_14",
         ],
+    }
+
+
+@app.post("/api/v1/models/train")
+def train_model(request: ModelTrainingRequest) -> dict[str, object]:
+    if not request.rows:
+        raise HTTPException(status_code=400, detail="dataset rows cannot be empty")
+
+    try:
+        dataset = training_rows_to_model_dataset(request.rows)
+        result = train_and_evaluate(
+            dataset,
+            horizon=request.horizon,
+            train_ratio=request.trainRatio,
+            validation_ratio=request.validationRatio,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+    return {
+        "trained": result.model.is_fitted,
+        "model": {
+            "name": "logistic_regression",
+        },
+        "horizon": request.horizon,
+        "split": {
+            "trainRows": len(result.split.train),
+            "validationRows": len(result.split.validation),
+            "testRows": len(result.split.test),
+        },
+        "validation": _metrics_to_dict(result.validation),
+        "test": _metrics_to_dict(result.test),
+        "baseline": {
+            "validation": _baseline_to_dict(result.baseline_validation),
+            "test": _baseline_to_dict(result.baseline_test),
+        },
+        "trainedAt": datetime.now(timezone.utc).isoformat(),
     }
 
 
