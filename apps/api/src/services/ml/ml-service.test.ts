@@ -1,7 +1,10 @@
 import type { TrainingDatasetRow } from '../market-data/dataset';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { validateTrainingDataset } from './ml-service';
+import {
+  trainModel,
+  validateTrainingDataset,
+} from './ml-service';
 
 const originalFetch = globalThis.fetch;
 
@@ -27,6 +30,24 @@ const makeTrainingRow = (
   },
   target,
 });
+
+const makeTrainingRows = (
+  count = 20,
+): TrainingDatasetRow[] =>
+  Array.from({ length: count }, (_, index) => {
+    const day = index + 1;
+    const nextDay = day + 1;
+
+    return makeTrainingRow(
+      `2026-01-${day
+        .toString()
+        .padStart(2, '0')}T09:15:00+00:00`,
+      `2026-01-${nextDay
+        .toString()
+        .padStart(2, '0')}T09:15:00+00:00`,
+      index % 2 === 0 ? 1 : 0,
+    );
+  });
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
@@ -90,7 +111,8 @@ describe('validateTrainingDataset', () => {
 
     globalThis.fetch = fetchMock;
 
-    const result = await validateTrainingDataset(rows);
+    const result =
+      await validateTrainingDataset(rows);
 
     expect(result).toEqual({
       valid: true,
@@ -113,7 +135,8 @@ describe('validateTrainingDataset', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
-    const [url, options] = fetchMock.mock.calls[0];
+    const [url, options] =
+      fetchMock.mock.calls[0];
 
     expect(url).toBe(
       'http://localhost:8000/api/v1/datasets/validate',
@@ -126,7 +149,9 @@ describe('validateTrainingDataset', () => {
       },
     });
 
-    expect(JSON.parse(options.body as string)).toEqual({
+    expect(
+      JSON.parse(options.body as string),
+    ).toEqual({
       rows,
     });
   });
@@ -140,22 +165,25 @@ describe('validateTrainingDataset', () => {
       ),
     ];
 
-    globalThis.fetch = vi.fn().mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          detail:
-            'dataset timestamps must be strictly chronological with no duplicates',
-        }),
-        {
-          status: 400,
-          headers: {
-            'Content-Type': 'application/json',
+    globalThis.fetch =
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            detail:
+              'dataset timestamps must be strictly chronological with no duplicates',
+          }),
+          {
+            status: 400,
+            headers: {
+              'Content-Type': 'application/json',
+            },
           },
-        },
-      ),
-    );
+        ),
+      );
 
-    await expect(validateTrainingDataset(rows)).rejects.toThrow(
+    await expect(
+      validateTrainingDataset(rows),
+    ).rejects.toThrow(
       'dataset timestamps must be strictly chronological with no duplicates',
     );
   });
@@ -169,13 +197,209 @@ describe('validateTrainingDataset', () => {
       ),
     ];
 
+    globalThis.fetch =
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            valid: true,
+            rowCount: 'one',
+            featureCount: 11,
+            featureNames: [],
+          }),
+          {
+            status: 200,
+            headers: {
+              'Content-Type': 'application/json',
+            },
+          },
+        ),
+      );
+
+    await expect(
+      validateTrainingDataset(rows),
+    ).rejects.toThrow(
+      'ML service returned an invalid validation response',
+    );
+  });
+});
+
+describe('trainModel', () => {
+  it('rejects an empty training dataset before making a request', async () => {
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock;
+
+    await expect(trainModel([])).rejects.toThrow(
+      'training dataset cannot be empty',
+    );
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('sends the dataset and training options to the ML service', async () => {
+    const rows = makeTrainingRows();
+
+    const trainingResponse = {
+      trained: true,
+      model: {
+        name: 'logistic_regression',
+      },
+      horizon: 2,
+      split: {
+        trainRows: 13,
+        validationRows: 2,
+        testRows: 2,
+      },
+      validation: {
+        accuracy: 0.75,
+        precision: 0.8,
+        recall: 0.6666666667,
+        f1: 0.7272727273,
+        logLoss: 0.61,
+      },
+      test: {
+        accuracy: 0.5,
+        precision: 0.5,
+        recall: 1,
+        f1: 0.6666666667,
+        logLoss: 0.72,
+      },
+      baseline: {
+        validation: {
+          metrics: {
+            accuracy: 0.5,
+            precision: 0.5,
+            recall: 1,
+            f1: 0.6666666667,
+            logLoss: 17.269388197455342,
+          },
+          predictedClass: 1,
+          predictedClassProbability: 0.5,
+        },
+        test: {
+          metrics: {
+            accuracy: 0.5,
+            precision: 0.5,
+            recall: 1,
+            f1: 0.6666666667,
+            logLoss: 17.269388197455342,
+          },
+          predictedClass: 1,
+          predictedClassProbability: 0.5,
+        },
+      },
+      trainedAt:
+        '2026-09-11T12:00:00.000Z',
+    };
+
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify(trainingResponse),
+        {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        },
+      ),
+    );
+
+    globalThis.fetch = fetchMock;
+
+    const result = await trainModel(
+      rows,
+      {
+        horizon: 2,
+        trainRatio: 0.65,
+        validationRatio: 0.15,
+      },
+    );
+
+    expect(result).toEqual(
+      trainingResponse,
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const [url, options] =
+      fetchMock.mock.calls[0];
+
+    expect(url).toBe(
+      'http://localhost:8000/api/v1/models/train',
+    );
+
+    expect(options).toMatchObject({
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    expect(
+      JSON.parse(options.body as string),
+    ).toEqual({
+      rows,
+      horizon: 2,
+      trainRatio: 0.65,
+      validationRatio: 0.15,
+    });
+  });
+
+  it('uses default training options when none are provided', async () => {
+    const rows = makeTrainingRows();
+
     globalThis.fetch = vi.fn().mockResolvedValue(
       new Response(
         JSON.stringify({
-          valid: true,
-          rowCount: 'one',
-          featureCount: 11,
-          featureNames: [],
+          trained: true,
+          model: {
+            name: 'logistic_regression',
+          },
+          horizon: 1,
+          split: {
+            trainRows: 14,
+            validationRows: 2,
+            testRows: 2,
+          },
+          validation: {
+            accuracy: 0.5,
+            precision: 0.5,
+            recall: 1,
+            f1: 0.6666666667,
+            logLoss: 0.69,
+          },
+          test: {
+            accuracy: 0.5,
+            precision: 0.5,
+            recall: 1,
+            f1: 0.6666666667,
+            logLoss: 0.69,
+          },
+          baseline: {
+            validation: {
+              metrics: {
+                accuracy: 0.5,
+                precision: 0.5,
+                recall: 1,
+                f1: 0.6666666667,
+                logLoss: 17.269388197455342,
+              },
+              predictedClass: 1,
+              predictedClassProbability: 0.5,
+            },
+            test: {
+              metrics: {
+                accuracy: 0.5,
+                precision: 0.5,
+                recall: 1,
+                f1: 0.6666666667,
+                logLoss: 17.269388197455342,
+              },
+              predictedClass: 1,
+              predictedClassProbability: 0.5,
+            },
+          },
+          trainedAt:
+            '2026-09-11T12:00:00.000Z',
         }),
         {
           status: 200,
@@ -186,8 +410,122 @@ describe('validateTrainingDataset', () => {
       ),
     );
 
-    await expect(validateTrainingDataset(rows)).rejects.toThrow(
-      'ML service returned an invalid validation response',
+    await trainModel(rows);
+
+    const [, options] =
+      (
+        globalThis.fetch as ReturnType<
+          typeof vi.fn
+        >
+      ).mock.calls[0];
+
+    expect(
+      JSON.parse(options.body as string),
+    ).toMatchObject({
+      rows,
+      horizon: 1,
+      trainRatio: 0.70,
+      validationRatio: 0.15,
+    });
+  });
+
+  it('returns the ML service training error', async () => {
+    const rows = makeTrainingRows();
+
+    globalThis.fetch =
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            detail:
+              'training dataset must contain both classes',
+          }),
+          {
+            status: 400,
+            headers: {
+              'Content-Type': 'application/json',
+            },
+          },
+        ),
+      );
+
+    await expect(
+      trainModel(rows),
+    ).rejects.toThrow(
+      'training dataset must contain both classes',
+    );
+  });
+
+  it('rejects an invalid successful training response', async () => {
+    const rows = makeTrainingRows();
+
+    globalThis.fetch =
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            trained: true,
+            model: {
+              name: 'logistic_regression',
+            },
+            horizon: 1,
+            split: {
+              trainRows: 'fourteen',
+              validationRows: 2,
+              testRows: 2,
+            },
+            validation: {
+              accuracy: 0.5,
+              precision: 0.5,
+              recall: 1,
+              f1: 0.6666666667,
+              logLoss: 0.69,
+            },
+            test: {
+              accuracy: 0.5,
+              precision: 0.5,
+              recall: 1,
+              f1: 0.6666666667,
+              logLoss: 0.69,
+            },
+            baseline: {
+              validation: {
+                metrics: {
+                  accuracy: 0.5,
+                  precision: 0.5,
+                  recall: 1,
+                  f1: 0.6666666667,
+                  logLoss: 0.69,
+                },
+                predictedClass: 1,
+                predictedClassProbability: 0.5,
+              },
+              test: {
+                metrics: {
+                  accuracy: 0.5,
+                  precision: 0.5,
+                  recall: 1,
+                  f1: 0.6666666667,
+                  logLoss: 0.69,
+                },
+                predictedClass: 1,
+                predictedClassProbability: 0.5,
+              },
+            },
+            trainedAt:
+              '2026-09-11T12:00:00.000Z',
+          }),
+          {
+            status: 200,
+            headers: {
+              'Content-Type': 'application/json',
+            },
+          },
+        ),
+      );
+
+    await expect(
+      trainModel(rows),
+    ).rejects.toThrow(
+      'ML service returned an invalid training response',
     );
   });
 });
