@@ -1,10 +1,15 @@
 from dataclasses import dataclass
 
 from app.benchmark import BaselineBenchmark, benchmark_majority_baseline
-from app.dataset import ModelDataset
+from app.dataset import FEATURE_NAMES, ModelDataset
 from app.dataset_validation import validate_model_dataset
 from app.evaluation import ClassificationMetrics, classification_metrics
 from app.logistic_model import LogisticRegressionModel
+from app.model_artifact import (
+    ModelArtifact,
+    build_model_artifact,
+    save_model_artifact,
+)
 from app.purged_split import (
     PurgedChronologicalSplit,
     purged_chronological_split,
@@ -30,6 +35,7 @@ class TrainingResult:
     baseline_test: BaselineBenchmark
     split: PurgedChronologicalSplit[object]
     walk_forward: WalkForwardResult | None
+    artifact: ModelArtifact | None
 
 
 def _to_model_benchmark(metrics: ClassificationMetrics) -> ModelBenchmark:
@@ -51,6 +57,9 @@ def train_and_evaluate(
     walk_forward_initial_train_size: int = 20,
     walk_forward_test_size: int = 5,
     walk_forward_step_size: int = 5,
+    artifact_path: str | None = None,
+    model_name: str = "logistic_regression",
+    model_version: str = "v1",
 ) -> TrainingResult:
     validate_model_dataset(dataset)
 
@@ -68,8 +77,14 @@ def train_and_evaluate(
     x_train = [dataset.x[index] for index in train_indices]
     y_train = [dataset.y[index] for index in train_indices]
 
-    x_validation = [dataset.x[index] for index in validation_indices]
-    y_validation = [dataset.y[index] for index in validation_indices]
+    x_validation = [
+        dataset.x[index]
+        for index in validation_indices
+    ]
+    y_validation = [
+        dataset.y[index]
+        for index in validation_indices
+    ]
 
     x_test = [dataset.x[index] for index in test_indices]
     y_test = [dataset.y[index] for index in test_indices]
@@ -117,6 +132,22 @@ def train_and_evaluate(
             step_size=walk_forward_step_size,
         )
 
+    artifact = None
+
+    if artifact_path is not None:
+        artifact = build_model_artifact(
+            model,
+            model_name=model_name,
+            model_version=model_version,
+            feature_names=list(FEATURE_NAMES),
+            horizon=horizon,
+        )
+
+        save_model_artifact(
+            artifact,
+            artifact_path,
+        )
+
     return TrainingResult(
         model=model,
         validation=_to_model_benchmark(validation_metrics),
@@ -125,4 +156,5 @@ def train_and_evaluate(
         baseline_test=baseline_test,
         split=split,
         walk_forward=walk_forward_result,
+        artifact=artifact,
     )
