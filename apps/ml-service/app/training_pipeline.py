@@ -9,6 +9,7 @@ from app.purged_split import (
     PurgedChronologicalSplit,
     purged_chronological_split,
 )
+from app.walk_forward import WalkForwardResult, walk_forward_evaluate
 
 
 @dataclass(frozen=True)
@@ -28,6 +29,7 @@ class TrainingResult:
     baseline_validation: BaselineBenchmark
     baseline_test: BaselineBenchmark
     split: PurgedChronologicalSplit[object]
+    walk_forward: WalkForwardResult | None
 
 
 def _to_model_benchmark(metrics: ClassificationMetrics) -> ModelBenchmark:
@@ -45,6 +47,10 @@ def train_and_evaluate(
     horizon: int = 1,
     train_ratio: float = 0.70,
     validation_ratio: float = 0.15,
+    run_walk_forward: bool = False,
+    walk_forward_initial_train_size: int = 20,
+    walk_forward_test_size: int = 5,
+    walk_forward_step_size: int = 5,
 ) -> TrainingResult:
     validate_model_dataset(dataset)
 
@@ -99,6 +105,18 @@ def train_and_evaluate(
         y_evaluation=y_test,
     )
 
+    walk_forward_result = None
+
+    if run_walk_forward:
+        walk_forward_result = walk_forward_evaluate(
+            x=dataset.x,
+            y=dataset.y,
+            horizon=horizon,
+            initial_train_size=walk_forward_initial_train_size,
+            test_size=walk_forward_test_size,
+            step_size=walk_forward_step_size,
+        )
+
     return TrainingResult(
         model=model,
         validation=_to_model_benchmark(validation_metrics),
@@ -106,4 +124,5 @@ def train_and_evaluate(
         baseline_validation=baseline_validation,
         baseline_test=baseline_test,
         split=split,
+        walk_forward=walk_forward_result,
     )

@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 from app.dataset import ModelDataset
@@ -33,17 +35,33 @@ def make_dataset() -> tuple[list[list[float]], list[int]]:
     return x, y
 
 
+def make_walk_forward_dataset() -> tuple[list[list[float]], list[int]]:
+    x = [
+        [float(index), float(index % 5)]
+        for index in range(40)
+    ]
+
+    y = [
+        0 if index % 2 == 0 else 1
+        for index in range(40)
+    ]
+
+    return x, y
+
+
 def make_model_dataset(
     x: list[list[float]],
     y: list[int],
 ) -> ModelDataset:
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
     timestamps = [
-        f"2026-01-{index + 1:02d}T00:00:00+00:00"
+        (start + timedelta(days=index)).isoformat()
         for index in range(len(x))
     ]
 
     future_timestamps = [
-        f"2026-01-{index + 2:02d}T00:00:00+00:00"
+        (start + timedelta(days=index + 1)).isoformat()
         for index in range(len(x))
     ]
 
@@ -131,8 +149,14 @@ def test_model_produces_probabilities_for_validation_and_test() -> None:
     assert len(validation_probabilities) == len(result.split.validation)
     assert len(test_probabilities) == len(result.split.test)
 
-    assert all(0.0 <= probability <= 1.0 for probability in validation_probabilities)
-    assert all(0.0 <= probability <= 1.0 for probability in test_probabilities)
+    assert all(
+        0.0 <= probability <= 1.0
+        for probability in validation_probabilities
+    )
+    assert all(
+        0.0 <= probability <= 1.0
+        for probability in test_probabilities
+    )
 
 
 def test_baseline_is_evaluated_on_same_test_partition() -> None:
@@ -166,7 +190,84 @@ def test_training_does_not_use_test_labels_for_model_fitting() -> None:
     assert result_two.validation == result_one.validation
 
 
-def test_rejects_empty_dataset() -> None:
+def test_training_pipeline_does_not_run_walk_forward_by_default() -> None:
+    x, y = make_dataset()
+    dataset = make_model_dataset(x, y)
+
+    result = train_and_evaluate(dataset)
+
+    assert result.walk_forward is None
+
+
+def test_training_pipeline_can_run_walk_forward_evaluation() -> None:
+    x, y = make_walk_forward_dataset()
+    dataset = make_model_dataset(x, y)
+
+    result = train_and_evaluate(
+        dataset,
+        horizon=1,
+        run_walk_forward=True,
+        walk_forward_initial_train_size=10,
+        walk_forward_test_size=5,
+        walk_forward_step_size=5,
+    )
+
+    assert result.walk_forward is not None
+    assert len(result.walk_forward.windows) == 5
+    assert len(result.walk_forward.predictions) == 25
+    assert len(result.walk_forward.probabilities) == 25
+    assert len(result.walk_forward.actuals) == 25
+
+
+def test_training_pipeline_walk_forward_uses_requested_configuration() -> None:
+    x, y = make_walk_forward_dataset()
+    dataset = make_model_dataset(x, y)
+
+    result = train_and_evaluate(
+        dataset,
+        horizon=2,
+        run_walk_forward=True,
+        walk_forward_initial_train_size=10,
+        walk_forward_test_size=4,
+        walk_forward_step_size=4,
+    )
+
+    assert result.walk_forward is not None
+
+    assert result.walk_forward.windows[0].train_start == 0
+    assert result.walk_forward.windows[0].train_end == 10
+    assert result.walk_forward.windows[0].test_start == 12
+    assert result.walk_forward.windows[0].test_end == 16
+
+    for window in result.walk_forward.windows:
+        assert window.test_start - window.train_end == 2
+
+
+def test_training_pipeline_walk_forward_produces_metrics() -> None:
+    x, y = make_walk_forward_dataset()
+    dataset = make_model_dataset(x, y)
+
+    result = train_and_evaluate(
+        dataset,
+        run_walk_forward=True,
+        walk_forward_initial_train_size=10,
+        walk_forward_test_size=5,
+        walk_forward_step_size=5,
+    )
+
+    assert result.walk_forward is not None
+
+    assert 0.0 <= result.walk_forward.metrics.accuracy <= 1.0
+    assert 0.0 <= result.walk_forward.metrics.precision <= 1.0
+    assert 0.0 <= result.walk_forward.metrics.recall <= 1.0
+    assert 0.0 <= result.walk_forward.metrics.f1 <= 1.0
+    assert result.walk_forward.metrics.log_loss >= 0.0
+
+    assert 0.0 <= result.walk_forward.baseline.metrics.accuracy <= 1.0
+    assert result.walk_forward.baseline.metrics.log_loss >= 0.0
+
+
+def test_training_pipeline_rejects_empty_dataset() -> None:
     dataset = ModelDataset(
         x=[],
         y=[],
@@ -178,7 +279,7 @@ def test_rejects_empty_dataset() -> None:
         train_and_evaluate(dataset)
 
 
-def test_rejects_mismatched_features_and_labels() -> None:
+def test_training_pipeline_rejects_mismatched_features_and_labels() -> None:
     dataset = ModelDataset(
         x=[
             [1.0],
@@ -199,7 +300,7 @@ def test_rejects_mismatched_features_and_labels() -> None:
         train_and_evaluate(dataset)
 
 
-def test_rejects_dataset_that_cannot_form_valid_classes() -> None:
+def test_training_pipeline_rejects_dataset_that_cannot_form_valid_classes() -> None:
     x = [[float(index)] for index in range(20)]
     y = [1] * 20
 
