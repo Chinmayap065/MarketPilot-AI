@@ -341,6 +341,10 @@ describe('trainModel', () => {
       horizon: 2,
       trainRatio: 0.65,
       validationRatio: 0.15,
+      runWalkForward: false,
+      walkForwardInitialTrainSize: 20,
+      walkForwardTestSize: 5,
+      walkForwardStepSize: 5,
     });
   });
 
@@ -421,11 +425,149 @@ describe('trainModel', () => {
 
     expect(
       JSON.parse(options.body as string),
-    ).toMatchObject({
+    ).toEqual({
       rows,
       horizon: 1,
       trainRatio: 0.70,
       validationRatio: 0.15,
+      runWalkForward: false,
+      walkForwardInitialTrainSize: 20,
+      walkForwardTestSize: 5,
+      walkForwardStepSize: 5,
+    });
+  });
+
+  it('sends walk-forward training options when requested', async () => {
+    const rows = makeTrainingRows(30);
+
+    const trainingResponse = {
+      trained: true,
+      model: {
+        name: 'logistic_regression',
+      },
+      horizon: 1,
+      split: {
+        trainRows: 21,
+        validationRows: 3,
+        testRows: 3,
+      },
+      validation: {
+        accuracy: 0.6,
+        precision: 0.6,
+        recall: 0.6,
+        f1: 0.6,
+        logLoss: 0.68,
+      },
+      test: {
+        accuracy: 0.6,
+        precision: 0.6,
+        recall: 0.6,
+        f1: 0.6,
+        logLoss: 0.68,
+      },
+      baseline: {
+        validation: {
+          metrics: {
+            accuracy: 0.5,
+            precision: 0.5,
+            recall: 0.5,
+            f1: 0.5,
+            logLoss: 0.69,
+          },
+          predictedClass: 1,
+          predictedClassProbability: 0.5,
+        },
+        test: {
+          metrics: {
+            accuracy: 0.5,
+            precision: 0.5,
+            recall: 0.5,
+            f1: 0.5,
+            logLoss: 0.69,
+          },
+          predictedClass: 1,
+          predictedClassProbability: 0.5,
+        },
+      },
+      walkForward: {
+        metrics: {
+          accuracy: 0.6,
+          precision: 0.6,
+          recall: 0.6,
+          f1: 0.6,
+          logLoss: 0.68,
+        },
+        baseline: {
+          metrics: {
+            accuracy: 0.5,
+            precision: 0.5,
+            recall: 0.5,
+            f1: 0.5,
+            logLoss: 0.69,
+          },
+          predictedClass: 1,
+          predictedClassProbability: 0.5,
+        },
+        windowCount: 1,
+        windows: [
+          {
+            trainStart: 0,
+            trainEnd: 20,
+            testStart: 21,
+            testEnd: 26,
+          },
+        ],
+        predictionCount: 5,
+      },
+      trainedAt:
+        '2026-09-11T12:00:00.000Z',
+    };
+
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify(trainingResponse),
+        {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        },
+      ),
+    );
+
+    const result = await trainModel(
+      rows,
+      {
+        horizon: 1,
+        runWalkForward: true,
+        walkForwardInitialTrainSize: 20,
+        walkForwardTestSize: 5,
+        walkForwardStepSize: 5,
+      },
+    );
+
+    expect(result.walkForward).toEqual(
+      trainingResponse.walkForward,
+    );
+
+    const [, options] =
+      (
+        globalThis.fetch as ReturnType<
+          typeof vi.fn
+        >
+      ).mock.calls[0];
+
+    expect(
+      JSON.parse(options.body as string),
+    ).toEqual({
+      rows,
+      horizon: 1,
+      trainRatio: 0.70,
+      validationRatio: 0.15,
+      runWalkForward: true,
+      walkForwardInitialTrainSize: 20,
+      walkForwardTestSize: 5,
+      walkForwardStepSize: 5,
     });
   });
 
@@ -509,6 +651,110 @@ describe('trainModel', () => {
                 predictedClass: 1,
                 predictedClassProbability: 0.5,
               },
+            },
+            trainedAt:
+              '2026-09-11T12:00:00.000Z',
+          }),
+          {
+            status: 200,
+            headers: {
+              'Content-Type': 'application/json',
+            },
+          },
+        ),
+      );
+
+    await expect(
+      trainModel(rows),
+    ).rejects.toThrow(
+      'ML service returned an invalid training response',
+    );
+  });
+
+  it('rejects an invalid walk-forward response', async () => {
+    const rows = makeTrainingRows(30);
+
+    globalThis.fetch =
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            trained: true,
+            model: {
+              name: 'logistic_regression',
+            },
+            horizon: 1,
+            split: {
+              trainRows: 21,
+              validationRows: 3,
+              testRows: 3,
+            },
+            validation: {
+              accuracy: 0.5,
+              precision: 0.5,
+              recall: 0.5,
+              f1: 0.5,
+              logLoss: 0.69,
+            },
+            test: {
+              accuracy: 0.5,
+              precision: 0.5,
+              recall: 0.5,
+              f1: 0.5,
+              logLoss: 0.69,
+            },
+            baseline: {
+              validation: {
+                metrics: {
+                  accuracy: 0.5,
+                  precision: 0.5,
+                  recall: 0.5,
+                  f1: 0.5,
+                  logLoss: 0.69,
+                },
+                predictedClass: 1,
+                predictedClassProbability: 0.5,
+              },
+              test: {
+                metrics: {
+                  accuracy: 0.5,
+                  precision: 0.5,
+                  recall: 0.5,
+                  f1: 0.5,
+                  logLoss: 0.69,
+                },
+                predictedClass: 1,
+                predictedClassProbability: 0.5,
+              },
+            },
+            walkForward: {
+              metrics: {
+                accuracy: 0.6,
+                precision: 0.6,
+                recall: 0.6,
+                f1: 0.6,
+                logLoss: 0.68,
+              },
+              baseline: {
+                metrics: {
+                  accuracy: 0.5,
+                  precision: 0.5,
+                  recall: 0.5,
+                  f1: 0.5,
+                  logLoss: 0.69,
+                },
+                predictedClass: 1,
+                predictedClassProbability: 0.5,
+              },
+              windowCount: 1,
+              windows: [
+                {
+                  trainStart: 'zero',
+                  trainEnd: 20,
+                  testStart: 21,
+                  testEnd: 26,
+                },
+              ],
+              predictionCount: 5,
             },
             trainedAt:
               '2026-09-11T12:00:00.000Z',

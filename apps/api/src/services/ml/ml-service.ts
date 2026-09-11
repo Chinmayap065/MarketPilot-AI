@@ -24,6 +24,21 @@ const baselineResultSchema = z.object({
   predictedClassProbability: z.number().finite(),
 });
 
+const walkForwardWindowSchema = z.object({
+  trainStart: z.number().int().nonnegative(),
+  trainEnd: z.number().int().nonnegative(),
+  testStart: z.number().int().nonnegative(),
+  testEnd: z.number().int().nonnegative(),
+});
+
+const walkForwardResultSchema = z.object({
+  metrics: modelMetricsSchema,
+  baseline: baselineResultSchema,
+  windowCount: z.number().int().nonnegative(),
+  windows: z.array(walkForwardWindowSchema),
+  predictionCount: z.number().int().nonnegative(),
+});
+
 const modelTrainingResponseSchema = z.object({
   trained: z.boolean(),
   model: z.object({
@@ -41,6 +56,7 @@ const modelTrainingResponseSchema = z.object({
     validation: baselineResultSchema,
     test: baselineResultSchema,
   }),
+  walkForward: walkForwardResultSchema.optional(),
   trainedAt: z.string().datetime(),
 });
 
@@ -65,6 +81,21 @@ export interface BaselineTrainingResult {
   predictedClassProbability: number;
 }
 
+export interface WalkForwardWindow {
+  trainStart: number;
+  trainEnd: number;
+  testStart: number;
+  testEnd: number;
+}
+
+export interface WalkForwardTrainingResult {
+  metrics: ModelMetrics;
+  baseline: BaselineTrainingResult;
+  windowCount: number;
+  windows: WalkForwardWindow[];
+  predictionCount: number;
+}
+
 export interface ModelTrainingResult {
   trained: boolean;
   model: {
@@ -82,6 +113,7 @@ export interface ModelTrainingResult {
     validation: BaselineTrainingResult;
     test: BaselineTrainingResult;
   };
+  walkForward?: WalkForwardTrainingResult;
   trainedAt: string;
 }
 
@@ -89,6 +121,10 @@ export interface ModelTrainingOptions {
   horizon?: number;
   trainRatio?: number;
   validationRatio?: number;
+  runWalkForward?: boolean;
+  walkForwardInitialTrainSize?: number;
+  walkForwardTestSize?: number;
+  walkForwardStepSize?: number;
 }
 
 function getErrorDetail(
@@ -174,6 +210,14 @@ export async function trainModel(
     options.trainRatio ?? 0.70;
   const validationRatio =
     options.validationRatio ?? 0.15;
+  const runWalkForward =
+    options.runWalkForward ?? false;
+  const walkForwardInitialTrainSize =
+    options.walkForwardInitialTrainSize ?? 20;
+  const walkForwardTestSize =
+    options.walkForwardTestSize ?? 5;
+  const walkForwardStepSize =
+    options.walkForwardStepSize ?? 5;
 
   const response = await fetch(
     `${env.mlServiceUrl}/api/v1/models/train`,
@@ -187,6 +231,10 @@ export async function trainModel(
         horizon,
         trainRatio,
         validationRatio,
+        runWalkForward,
+        walkForwardInitialTrainSize,
+        walkForwardTestSize,
+        walkForwardStepSize,
       }),
     },
   );
