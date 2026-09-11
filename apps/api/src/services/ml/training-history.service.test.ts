@@ -1,6 +1,5 @@
 import type {
   MarketCandle,
-  MarketQuote,
 } from '@marketpilot/types';
 
 import {
@@ -78,13 +77,70 @@ function createMarketDataMock(
           duplicates: 0,
           gapAnalysis: {
             timeframe: '15m',
-            expectedIntervalMs: 15 * 60 * 1000,
-            candlesAnalyzed: candles.length,
+            expectedIntervalMs:
+              15 * 60 * 1000,
+            candlesAnalyzed:
+              candles.length,
             potentialGaps: [],
           },
         },
       }),
   };
+}
+
+function createTrainingMock() {
+  return vi.fn().mockResolvedValue({
+    trained: true,
+    model: {
+      name: 'logistic_regression',
+    },
+    horizon: 2,
+    split: {
+      trainRows: 13,
+      validationRows: 2,
+      testRows: 2,
+    },
+    validation: {
+      accuracy: 0.75,
+      precision: 0.8,
+      recall: 0.6666666667,
+      f1: 0.7272727273,
+      logLoss: 0.61,
+    },
+    test: {
+      accuracy: 0.5,
+      precision: 0.5,
+      recall: 1,
+      f1: 0.6666666667,
+      logLoss: 0.72,
+    },
+    baseline: {
+      validation: {
+        metrics: {
+          accuracy: 0.5,
+          precision: 0.5,
+          recall: 1,
+          f1: 0.6666666667,
+          logLoss: 0.69,
+        },
+        predictedClass: 1,
+        predictedClassProbability: 0.5,
+      },
+      test: {
+        metrics: {
+          accuracy: 0.5,
+          precision: 0.5,
+          recall: 1,
+          f1: 0.6666666667,
+          logLoss: 0.69,
+        },
+        predictedClass: 1,
+        predictedClassProbability: 0.5,
+      },
+    },
+    trainedAt:
+      '2026-09-11T12:00:00.000Z',
+  });
 }
 
 describe(
@@ -96,6 +152,8 @@ describe(
         const candles = makeCandles(60);
         const marketData =
           createMarketDataMock(candles);
+        const train =
+          createTrainingMock();
 
         const start = new Date(
           candles[20].timestamp,
@@ -115,6 +173,7 @@ describe(
               horizon: 2,
             },
             marketData,
+            train,
           );
 
         expect(
@@ -203,6 +262,8 @@ describe(
         const candles = makeCandles(60);
         const marketData =
           createMarketDataMock(candles);
+        const train =
+          createTrainingMock();
 
         const start = new Date(
           candles[20].timestamp,
@@ -222,6 +283,7 @@ describe(
               horizon: 2,
             },
             marketData,
+            train,
           );
 
         const firstRow =
@@ -251,6 +313,66 @@ describe(
     );
 
     it(
+      'trains the validated requested dataset and returns training metrics',
+      async () => {
+        const candles = makeCandles(60);
+        const marketData =
+          createMarketDataMock(candles);
+        const train =
+          createTrainingMock();
+
+        const start = new Date(
+          candles[20].timestamp,
+        );
+
+        const end = new Date(
+          candles[40].timestamp,
+        );
+
+        const result =
+          await buildTrainingDatasetFromMarketData(
+            {
+              symbol: 'AAPL',
+              timeframe: '15m',
+              start,
+              end,
+              horizon: 2,
+            },
+            marketData,
+            train,
+          );
+
+        expect(train).toHaveBeenCalledTimes(1);
+
+        const [rows, options] =
+          train.mock.calls[0];
+
+        expect(rows).toEqual(
+          result.dataset,
+        );
+
+        expect(options).toEqual({
+          horizon: 2,
+        });
+
+        expect(result.training).toEqual(
+          expect.objectContaining({
+            trained: true,
+            model: {
+              name: 'logistic_regression',
+            },
+            horizon: 2,
+            split: {
+              trainRows: 13,
+              validationRows: 2,
+              testRows: 2,
+            },
+          }),
+        );
+      },
+    );
+
+    it(
       'rejects when market data is unavailable',
       async () => {
         const marketData = {
@@ -274,6 +396,9 @@ describe(
             }),
         };
 
+        const train =
+          createTrainingMock();
+
         await expect(
           buildTrainingDatasetFromMarketData(
             {
@@ -287,10 +412,15 @@ describe(
               ),
             },
             marketData,
+            train,
           ),
         ).rejects.toThrow(
           'market data unavailable for AAPL',
         );
+
+        expect(
+          train,
+        ).not.toHaveBeenCalled();
       },
     );
 
@@ -300,6 +430,8 @@ describe(
         const candles = makeCandles(30);
         const marketData =
           createMarketDataMock(candles);
+        const train =
+          createTrainingMock();
 
         const start = new Date(
           candles[10].timestamp,
@@ -318,10 +450,15 @@ describe(
               end,
             },
             marketData,
+            train,
           ),
         ).rejects.toThrow(
           'insufficient historical lookback',
         );
+
+        expect(
+          train,
+        ).not.toHaveBeenCalled();
       },
     );
 
@@ -332,6 +469,9 @@ describe(
           createMarketDataMock(
             makeCandles(60),
           );
+
+        const train =
+          createTrainingMock();
 
         await expect(
           buildTrainingDatasetFromMarketData(
@@ -347,6 +487,7 @@ describe(
               horizon: 0,
             },
             marketData,
+            train,
           ),
         ).rejects.toThrow(
           'horizon must be a positive integer',
@@ -354,6 +495,10 @@ describe(
 
         expect(
           marketData.getHistory,
+        ).not.toHaveBeenCalled();
+
+        expect(
+          train,
         ).not.toHaveBeenCalled();
       },
     );
@@ -364,6 +509,8 @@ describe(
         const candles = makeCandles(60);
         const marketData =
           createMarketDataMock(candles);
+        const train =
+          createTrainingMock();
 
         const result =
           await buildTrainingDatasetFromMarketData(
@@ -378,6 +525,7 @@ describe(
               ),
             },
             marketData,
+            train,
           );
 
         expect(

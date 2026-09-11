@@ -11,6 +11,10 @@ import {
   buildAndValidateTrainingDataset,
   type TrainingDataBuildResult,
 } from './training-data.service.js';
+import {
+  trainModel,
+  type ModelTrainingResult,
+} from './ml-service.js';
 
 const FEATURE_LOOKBACK_CANDLES = 20;
 const LOOKBACK_BUFFER_MULTIPLIER = 2;
@@ -34,6 +38,8 @@ type MarketDataHistoryPort = Pick<
   'getHistory'
 >;
 
+type TrainModelPort = typeof trainModel;
+
 export interface TrainingHistoryRequest {
   symbol: string;
   timeframe: Timeframe;
@@ -55,6 +61,7 @@ export interface TrainingHistoryResult {
   >['meta'];
   dataset: TrainingDataBuildResult['dataset'];
   validation: TrainingDataBuildResult['validation'];
+  training: ModelTrainingResult;
 }
 
 function calculateHistoryStart(
@@ -132,6 +139,7 @@ export async function buildTrainingDatasetFromMarketData(
   request: TrainingHistoryRequest,
   marketData: MarketDataHistoryPort =
     new MarketDataService(),
+  train: TrainModelPort = trainModel,
 ): Promise<TrainingHistoryResult> {
   const horizon = request.horizon ?? 1;
 
@@ -205,6 +213,13 @@ export async function buildTrainingDatasetFromMarketData(
     );
   }
 
+  const training = await train(
+    dataset,
+    {
+      horizon,
+    },
+  );
+
   return {
     symbol: request.symbol,
     timeframe: request.timeframe,
@@ -212,10 +227,12 @@ export async function buildTrainingDatasetFromMarketData(
     requestedEnd: end.toISOString(),
     historyStart:
       historyStart.toISOString(),
-    historyEnd: historyEnd.toISOString(),
+    historyEnd:
+      historyEnd.toISOString(),
     candles: history.data,
     marketDataMeta: history.meta,
     dataset,
     validation: trainingData.validation,
+    training,
   };
 }
