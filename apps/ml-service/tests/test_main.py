@@ -2,6 +2,10 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 
+from app.inference import predict_from_artifact
+from app.logistic_model import LogisticRegressionModel
+from app.model_artifact import build_model_artifact
+
 from app.main import app
 
 
@@ -36,7 +40,14 @@ def make_valid_row(
 def make_training_rows(count: int = 20) -> list[dict]:
     rows = []
 
-    start = datetime(2026, 1, 1, 9, 15, tzinfo=timezone.utc)
+    start = datetime(
+        2026,
+        1,
+        1,
+        9,
+        15,
+        tzinfo=timezone.utc,
+    )
 
     for index in range(count):
         timestamp = start + timedelta(days=index)
@@ -51,6 +62,53 @@ def make_training_rows(count: int = 20) -> list[dict]:
         )
 
     return rows
+
+
+def make_prediction_artifact(tmp_path):
+    x = []
+    y = []
+
+    for index in range(20):
+        value = float(index + 1)
+
+        x.append(
+            [
+                value,
+                value * 2.0,
+                value / 10.0,
+                value / 100.0,
+            ]
+        )
+
+        y.append(index % 2)
+
+    model = LogisticRegressionModel()
+    model.fit(x, y)
+
+    artifact = build_model_artifact(
+        model,
+        model_name="logistic_regression",
+        model_version="v1",
+        feature_names=[
+            "feature_0",
+            "feature_1",
+            "feature_2",
+            "feature_3",
+        ],
+        horizon=1,
+        trained_at=datetime(2025, 1, 1),
+    )
+
+    artifact_path = tmp_path / "model.joblib"
+
+    from app.model_artifact import save_model_artifact
+
+    save_model_artifact(
+        artifact,
+        artifact_path,
+    )
+
+    return artifact_path
 
 
 def test_health() -> None:
@@ -347,7 +405,14 @@ def test_train_model_rejects_invalid_horizon() -> None:
 def test_train_model_rejects_dataset_with_one_class() -> None:
     rows = []
 
-    start = datetime(2026, 2, 1, 9, 15, tzinfo=timezone.utc)
+    start = datetime(
+        2026,
+        2,
+        1,
+        9,
+        15,
+        tzinfo=timezone.utc,
+    )
 
     for index in range(20):
         timestamp = start + timedelta(days=index)
@@ -371,3 +436,116 @@ def test_train_model_rejects_dataset_with_one_class() -> None:
 
     assert response.status_code == 400
     assert "both classes" in response.json()["detail"]
+
+
+def test_predict_model_returns_prediction(
+    tmp_path,
+) -> None:
+    artifact_path = make_prediction_artifact(tmp_path)
+
+    response = client.post(
+        "/api/v1/models/predict",
+        json={
+            "artifactPath": str(artifact_path),
+            "features": [
+                21.0,
+                42.0,
+                2.1,
+                0.21,
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+
+    body = response.json()
+
+    assert body["predictedClass"] in (0, 1)
+    assert 0.0 <= body["probability"] <= 1.0
+    assert body["model"] == {
+        "name": "logistic_regression",
+        "version": "v1",
+    }
+    assert body["horizon"] == 1
+
+
+def test_predict_model_rejects_wrong_feature_count(
+    tmp_path,
+) -> None:
+    artifact_path = make_prediction_artifact(tmp_path)
+
+    response = client.post(
+        "/api/v1/models/predict",
+        json={
+            "artifactPath": str(artifact_path),
+            "features": [
+                21.0,
+                42.0,
+                2.1,
+            ],
+        },
+    )
+
+    assert response.status_code == 400
+    assert "feature count does not match" in response.json()["detail"]
+
+
+def test_predict_model_rejects_missing_artifact(
+    tmp_path,
+) -> None:
+    artifact_path = tmp_path / "missing.joblib"
+
+    response = client.post(
+        "/api/v1/models/predict",
+        json={
+            "artifactPath": str(artifact_path),
+            "features": [
+                21.0,
+                42.0,
+                2.1,
+                0.21,
+            ],
+        },
+    )
+
+    assert response.status_code == 400
+    assert "model artifact does not exist" in response.json()["detail"]
+
+
+def test_predict_model_rejects_empty_features(
+    tmp_path,
+) -> None:
+    artifact_path = tmp_path / "model.joblib"
+
+    response = client.post(
+        "/api/v1/models/predict",
+        json={
+            "artifactPath": str(artifact_path),
+            "features": [],
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "detail": "prediction features cannot be empty",
+    }
+
+
+def test_predict_model_rejects_empty_artifact_path() -> None:
+    response = client.post(
+        "/api/v1/models/predict",
+        json={
+            "artifactPath": "",
+            "features": [
+                21.0,
+                42.0,
+                2.1,
+                0.21,
+            ],
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "detail": "artifact path cannot be empty",
+    }

@@ -4,8 +4,9 @@ from typing import Any
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from app.dataset import training_rows_to_model_dataset
+from app.dataset import FEATURE_NAMES, training_rows_to_model_dataset
 from app.dataset_validation import validate_model_dataset
+from app.inference import predict_from_artifact_path
 from app.training_pipeline import train_and_evaluate
 
 app = FastAPI(title="MarketPilot ML Service", version="0.1.0")
@@ -24,6 +25,11 @@ class ModelTrainingRequest(BaseModel):
     walkForwardInitialTrainSize: int = 20
     walkForwardTestSize: int = 5
     walkForwardStepSize: int = 5
+
+
+class ModelPredictionRequest(BaseModel):
+    artifactPath: str
+    features: list[float]
 
 
 def _metrics_to_dict(metrics: object) -> dict[str, float]:
@@ -73,40 +79,41 @@ def model_status() -> dict[str, object]:
 
 
 @app.post("/api/v1/datasets/validate")
-def validate_dataset(request: DatasetValidationRequest) -> dict[str, object]:
+def validate_dataset(
+    request: DatasetValidationRequest,
+) -> dict[str, object]:
     if not request.rows:
-        raise HTTPException(status_code=400, detail="dataset rows cannot be empty")
+        raise HTTPException(
+            status_code=400,
+            detail="dataset rows cannot be empty",
+        )
 
     try:
         dataset = training_rows_to_model_dataset(request.rows)
         validate_model_dataset(dataset)
     except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
+        raise HTTPException(
+            status_code=400,
+            detail=str(error),
+        ) from error
 
     return {
         "valid": True,
         "rowCount": len(dataset.x),
         "featureCount": len(dataset.x[0]),
-        "featureNames": [
-            "close",
-            "volume",
-            "return_1",
-            "log_return_1",
-            "sma_10",
-            "sma_20",
-            "price_to_sma_10",
-            "price_to_sma_20",
-            "volatility_10",
-            "volume_change_1",
-            "rsi_14",
-        ],
+        "featureNames": list(FEATURE_NAMES),
     }
 
 
 @app.post("/api/v1/models/train")
-def train_model(request: ModelTrainingRequest) -> dict[str, object]:
+def train_model(
+    request: ModelTrainingRequest,
+) -> dict[str, object]:
     if not request.rows:
-        raise HTTPException(status_code=400, detail="dataset rows cannot be empty")
+        raise HTTPException(
+            status_code=400,
+            detail="dataset rows cannot be empty",
+        )
 
     try:
         dataset = training_rows_to_model_dataset(request.rows)
@@ -122,7 +129,10 @@ def train_model(request: ModelTrainingRequest) -> dict[str, object]:
             walk_forward_step_size=request.walkForwardStepSize,
         )
     except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
+        raise HTTPException(
+            status_code=400,
+            detail=str(error),
+        ) from error
 
     response: dict[str, object] = {
         "trained": result.model.is_fitted,
@@ -138,16 +148,60 @@ def train_model(request: ModelTrainingRequest) -> dict[str, object]:
         "validation": _metrics_to_dict(result.validation),
         "test": _metrics_to_dict(result.test),
         "baseline": {
-            "validation": _baseline_to_dict(result.baseline_validation),
-            "test": _baseline_to_dict(result.baseline_test),
+            "validation": _baseline_to_dict(
+                result.baseline_validation,
+            ),
+            "test": _baseline_to_dict(
+                result.baseline_test,
+            ),
         },
         "trainedAt": datetime.now(timezone.utc).isoformat(),
     }
 
     if result.walk_forward is not None:
-        response["walkForward"] = _walk_forward_to_dict(result.walk_forward)
+        response["walkForward"] = _walk_forward_to_dict(
+            result.walk_forward,
+        )
 
     return response
+
+
+@app.post("/api/v1/models/predict")
+def predict_model(
+    request: ModelPredictionRequest,
+) -> dict[str, object]:
+    if not request.artifactPath:
+        raise HTTPException(
+            status_code=400,
+            detail="artifact path cannot be empty",
+        )
+
+    if not request.features:
+        raise HTTPException(
+            status_code=400,
+            detail="prediction features cannot be empty",
+        )
+
+    try:
+        prediction = predict_from_artifact_path(
+            request.artifactPath,
+            request.features,
+        )
+    except (ValueError, FileNotFoundError) as error:
+        raise HTTPException(
+            status_code=400,
+            detail=str(error),
+        ) from error
+
+    return {
+        "predictedClass": prediction.predicted_class,
+        "probability": prediction.probability,
+        "model": {
+            "name": prediction.model_name,
+            "version": prediction.model_version,
+        },
+        "horizon": prediction.horizon,
+    }
 
 
 @app.get("/")
