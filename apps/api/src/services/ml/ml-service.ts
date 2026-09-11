@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
-import type { TrainingDatasetRow } from '../market-data/dataset';
 import { env } from '../../config/env';
+import type { TrainingDatasetRow } from '../market-data/dataset';
 
 const datasetValidationResponseSchema = z.object({
   valid: z.literal(true),
@@ -58,6 +58,19 @@ const modelTrainingResponseSchema = z.object({
   }),
   walkForward: walkForwardResultSchema.optional(),
   trainedAt: z.string().datetime(),
+});
+
+const modelPredictionResponseSchema = z.object({
+  predictedClass: z.union([
+    z.literal(0),
+    z.literal(1),
+  ]),
+  probability: z.number().finite().min(0).max(1),
+  model: z.object({
+    name: z.string().min(1),
+    version: z.string().min(1),
+  }),
+  horizon: z.number().int().positive(),
 });
 
 export interface DatasetValidationResult {
@@ -125,6 +138,21 @@ export interface ModelTrainingOptions {
   walkForwardInitialTrainSize?: number;
   walkForwardTestSize?: number;
   walkForwardStepSize?: number;
+}
+
+export interface ModelPredictionResult {
+  predictedClass: 0 | 1;
+  probability: number;
+  model: {
+    name: string;
+    version: string;
+  };
+  horizon: number;
+}
+
+export interface ModelPredictionRequest {
+  artifactPath: string;
+  features: number[];
 }
 
 function getErrorDetail(
@@ -259,6 +287,59 @@ export async function trainModel(
   if (!parsedResponse.success) {
     throw new Error(
       'ML service returned an invalid training response',
+    );
+  }
+
+  return parsedResponse.data;
+}
+
+export async function predictModel(
+  request: ModelPredictionRequest,
+): Promise<ModelPredictionResult> {
+  if (!request.artifactPath) {
+    throw new Error('artifact path cannot be empty');
+  }
+
+  if (request.features.length === 0) {
+    throw new Error(
+      'prediction features cannot be empty',
+    );
+  }
+
+  const response = await fetch(
+    `${env.mlServiceUrl}/api/v1/models/predict`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        artifactPath: request.artifactPath,
+        features: request.features,
+      }),
+    },
+  );
+
+  const responseBody =
+    await readResponseBody(response);
+
+  if (!response.ok) {
+    throw new Error(
+      getErrorDetail(
+        responseBody,
+        response.status,
+      ),
+    );
+  }
+
+  const parsedResponse =
+    modelPredictionResponseSchema.safeParse(
+      responseBody,
+    );
+
+  if (!parsedResponse.success) {
+    throw new Error(
+      'ML service returned an invalid prediction response',
     );
   }
 
