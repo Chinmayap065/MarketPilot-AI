@@ -20,6 +20,10 @@ class ModelTrainingRequest(BaseModel):
     horizon: int = 1
     trainRatio: float = 0.70
     validationRatio: float = 0.15
+    runWalkForward: bool = False
+    walkForwardInitialTrainSize: int = 20
+    walkForwardTestSize: int = 5
+    walkForwardStepSize: int = 5
 
 
 def _metrics_to_dict(metrics: object) -> dict[str, float]:
@@ -37,6 +41,24 @@ def _baseline_to_dict(baseline: object) -> dict[str, object]:
         "metrics": _metrics_to_dict(baseline.metrics),
         "predictedClass": baseline.predicted_class,
         "predictedClassProbability": baseline.predicted_class_probability,
+    }
+
+
+def _walk_forward_to_dict(result: object) -> dict[str, object]:
+    return {
+        "metrics": _metrics_to_dict(result.metrics),
+        "baseline": _baseline_to_dict(result.baseline),
+        "windowCount": len(result.windows),
+        "windows": [
+            {
+                "trainStart": window.train_start,
+                "trainEnd": window.train_end,
+                "testStart": window.test_start,
+                "testEnd": window.test_end,
+            }
+            for window in result.windows
+        ],
+        "predictionCount": len(result.predictions),
     }
 
 
@@ -88,16 +110,21 @@ def train_model(request: ModelTrainingRequest) -> dict[str, object]:
 
     try:
         dataset = training_rows_to_model_dataset(request.rows)
+
         result = train_and_evaluate(
             dataset,
             horizon=request.horizon,
             train_ratio=request.trainRatio,
             validation_ratio=request.validationRatio,
+            run_walk_forward=request.runWalkForward,
+            walk_forward_initial_train_size=request.walkForwardInitialTrainSize,
+            walk_forward_test_size=request.walkForwardTestSize,
+            walk_forward_step_size=request.walkForwardStepSize,
         )
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
-    return {
+    response: dict[str, object] = {
         "trained": result.model.is_fitted,
         "model": {
             "name": "logistic_regression",
@@ -116,6 +143,11 @@ def train_model(request: ModelTrainingRequest) -> dict[str, object]:
         },
         "trainedAt": datetime.now(timezone.utc).isoformat(),
     }
+
+    if result.walk_forward is not None:
+        response["walkForward"] = _walk_forward_to_dict(result.walk_forward)
+
+    return response
 
 
 @app.get("/")

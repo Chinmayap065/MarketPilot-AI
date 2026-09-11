@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta, timezone
+
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -34,14 +36,16 @@ def make_valid_row(
 def make_training_rows(count: int = 20) -> list[dict]:
     rows = []
 
+    start = datetime(2026, 1, 1, 9, 15, tzinfo=timezone.utc)
+
     for index in range(count):
-        day = index + 1
-        next_day = day + 1
+        timestamp = start + timedelta(days=index)
+        future_timestamp = start + timedelta(days=index + 1)
 
         rows.append(
             make_valid_row(
-                timestamp=f"2026-01-{day:02d}T09:15:00+00:00",
-                future_timestamp=f"2026-01-{next_day:02d}T09:15:00+00:00",
+                timestamp=timestamp.isoformat(),
+                future_timestamp=future_timestamp.isoformat(),
                 target=index % 2,
             )
         )
@@ -215,6 +219,103 @@ def test_train_model_returns_training_metrics() -> None:
     assert "test" in body["baseline"]
     assert "trainedAt" in body
 
+    assert "walkForward" not in body
+
+
+def test_train_model_can_run_walk_forward_evaluation() -> None:
+    rows = make_training_rows(30)
+
+    response = client.post(
+        "/api/v1/models/train",
+        json={
+            "rows": rows,
+            "horizon": 1,
+            "trainRatio": 0.70,
+            "validationRatio": 0.15,
+            "runWalkForward": True,
+            "walkForwardInitialTrainSize": 20,
+            "walkForwardTestSize": 5,
+            "walkForwardStepSize": 5,
+        },
+    )
+
+    assert response.status_code == 200
+
+    body = response.json()
+
+    assert "walkForward" in body
+
+    walk_forward = body["walkForward"]
+
+    assert set(walk_forward["metrics"]) == {
+        "accuracy",
+        "precision",
+        "recall",
+        "f1",
+        "logLoss",
+    }
+
+    assert set(walk_forward["baseline"]) == {
+        "metrics",
+        "predictedClass",
+        "predictedClassProbability",
+    }
+
+    assert walk_forward["windowCount"] == 1
+    assert walk_forward["predictionCount"] == 5
+
+    assert walk_forward["windows"] == [
+        {
+            "trainStart": 0,
+            "trainEnd": 20,
+            "testStart": 21,
+            "testEnd": 26,
+        }
+    ]
+
+
+def test_train_model_walk_forward_uses_multiple_windows() -> None:
+    rows = make_training_rows(40)
+
+    response = client.post(
+        "/api/v1/models/train",
+        json={
+            "rows": rows,
+            "runWalkForward": True,
+            "walkForwardInitialTrainSize": 20,
+            "walkForwardTestSize": 5,
+            "walkForwardStepSize": 5,
+        },
+    )
+
+    assert response.status_code == 200
+
+    walk_forward = response.json()["walkForward"]
+
+    assert walk_forward["windowCount"] == 3
+    assert walk_forward["predictionCount"] == 15
+
+    assert walk_forward["windows"] == [
+        {
+            "trainStart": 0,
+            "trainEnd": 20,
+            "testStart": 21,
+            "testEnd": 26,
+        },
+        {
+            "trainStart": 0,
+            "trainEnd": 25,
+            "testStart": 26,
+            "testEnd": 31,
+        },
+        {
+            "trainStart": 0,
+            "trainEnd": 30,
+            "testStart": 31,
+            "testEnd": 36,
+        },
+    ]
+
 
 def test_train_model_rejects_empty_rows() -> None:
     response = client.post(
@@ -246,14 +347,16 @@ def test_train_model_rejects_invalid_horizon() -> None:
 def test_train_model_rejects_dataset_with_one_class() -> None:
     rows = []
 
+    start = datetime(2026, 2, 1, 9, 15, tzinfo=timezone.utc)
+
     for index in range(20):
-        day = index + 1
-        next_day = day + 1
+        timestamp = start + timedelta(days=index)
+        future_timestamp = start + timedelta(days=index + 1)
 
         rows.append(
             make_valid_row(
-                timestamp=f"2026-02-{day:02d}T09:15:00+00:00",
-                future_timestamp=f"2026-02-{next_day:02d}T09:15:00+00:00",
+                timestamp=timestamp.isoformat(),
+                future_timestamp=future_timestamp.isoformat(),
                 target=1,
             )
         )
